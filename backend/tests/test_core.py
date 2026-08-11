@@ -12,8 +12,8 @@ from database.crud import create_document, create_chunks
 from ingestion.chunker import chunk_text
 from ingestion.embeddings import embed_batch
 from retrieval.chroma_client import add_chunks, get_collection
+from retrieval.retriever import retrieve_top_k
 from services.chat_service import run_chat_query
-
 
 def test_sqlite_chroma_id_consistency():
     """
@@ -105,3 +105,66 @@ def test_end_to_end_rag_pipeline_with_mocked_gemini():
         first_source = result["sources"][0]
         assert set(first_source.keys()) == {"document_id", "chunk_id", "content", "score", "metadata"}
         assert 0.0 <= first_source["score"] <= 1.0
+
+def test_retrieval_discriminates_between_documents():
+    """
+    PROVES: retrieval doesn't just find "similar enough" text — it
+    correctly distinguishes between documents on genuinely different
+    topics. A query clearly about topic A should not return topic B's
+    content as a top result, even though both are in the same vector
+    store.
+
+    This is a distinct correctness property from ID-consistency (which
+    proves storage integrity) — this proves SEARCH QUALITY: that
+    embeddings are discriminative enough to separate unrelated content.
+    """
+    db = SessionLocal()
+
+    # Arrange: two documents on deliberately unrelated topics
+    doc_a = create_document(
+        db, filename="topic_a.pdf", file_path="/fake/a.pdf",
+        content_type="application/pdf", size_bytes=100,
+    )
+    text_a = "Photosynthesis is the process by which plants convert sunlight into chemical energy, producing glucose and oxygen from carbon dioxide and water."
+    chunks_a = chunk_text(text_a)
+    vectors_a = embed_batch(chunks_a)
+    rows_a = create_chunks(db, texts=chunks_a, document_id=doc_a.id)
+    add_chunks(
+        ids=[c.id for c in rows_a], texts=chunks_a, embeddings=vectors_a,
+        metadatas=[{"document_id": doc_a.id, "filename": doc_a.filename, "chunk_index": c.chunk_index} for c in rows_a],
+    )
+
+    doc_b = create_document(
+        db, filename="topic_b.pdf", file_path="/fake/b.pdf",
+        content_type="application/pdf", size_bytes=100,
+    )
+    text_b = "Interest rate hikes by central banks are typically used to control inflation by making borrowing more expensive, which reduces consumer spending."
+    chunks_b = chunk_text(text_b)
+    vectors_b = embed_batch(chunks_b)
+    rows_b = create_chunks(db, texts=chunks_b, document_id=doc_b.id)
+    add_chunks(
+        ids=[c.id for c in rows_b], texts=chunks_b, embeddings=vectors_b,
+        metadatas=[{"document_id": doc_b.id, "filename": doc_b.filename, "chunk_index": c.chunk_index} for c in rows_b],
+    )
+
+    # Act: query clearly about topic A's subject matter
+    results = retrieve_top_k(db, "How do plants convert sunlight into energy?", k=3)
+
+    # Assert: the top result's content must be about photosynthesis,
+    # not interest rates — proving retrieval discriminates by meaning.
+    # (We check content rather than a specific document_id because this
+    # test runs against a persistent Chroma store — repeated runs may
+    # have prior runs' documents still present.)
+    assert len(results) > 0, "Expected at least one result"
+    top_result = results[0]
+    assert "photosynthesis" in top_result["content"].lower() or "sunlight" in top_result["content"].lower(), (
+        f"Expected top result to be about photosynthesis, got: {top_result['content'][:100]}"
+    )
+
+    # Extra rigor: no result in the top-k should be about interest rates/finance
+    finance_terms = ["interest rate", "inflation", "central bank"]
+    for r in results:
+        content_lower = r["content"].lower()
+        assert not any(term in content_lower for term in finance_terms), (
+            f"Unrelated finance content leaked into top-{len(results)} results: {r['content'][:100]}"
+        )
