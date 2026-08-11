@@ -1,10 +1,8 @@
 """
-Benchmark script — produces resume-worthy metrics:
+Benchmark script -:
 1. Latency: ingestion pipeline stages, retrieval, chat response time
 2. Retrieval accuracy: top-K hit rate against a set of known queries
 
-Run from backend/:
-    python -m tests.benchmark
 """
 import time
 
