@@ -18,7 +18,7 @@ logger = get_logger(__name__)
 settings = get_settings()
 
 
-def retrieve_top_k(db: Session, query: str, k: int | None = None) -> list[dict]:
+def retrieve_top_k(db: Session, query: str, k: int | None = None,use_reranking: bool = False) -> list[dict]:
     """
     Embed the query, search Chroma, and return enriched results.
 
@@ -32,12 +32,13 @@ def retrieve_top_k(db: Session, query: str, k: int | None = None) -> list[dict]:
         }
     """
     top_k = k or settings.top_k_default
+    fetch_k = top_k * 4 if use_reranking else top_k  # fetch more candidates when reranking
 
     # Step 1: embed the query using the SAME model used for chunks
     query_vector = embed_text(query)
 
     # Step 2: search Chroma
-    raw_results = query_collection(query_vector, top_k=top_k)
+    raw_results = query_collection(query_vector, top_k=fetch_k)
 
     # Chroma returns nested lists (supports batch queries) — we only sent
     # one query, so we always take index [0] to unwrap the single result set.
@@ -67,9 +68,14 @@ def retrieve_top_k(db: Session, query: str, k: int | None = None) -> list[dict]:
             "metadata": metadata,
         })
 
-    logger.info(f"Retrieved {len(results)} chunks for query: {query!r}")
-    return results
+    if use_reranking:
+        from retrieval.reranker import rerank
+        results = rerank(query, results, top_k)
+        logger.info(f"Reranked {len(results)} results for query: {query!r}")
+    else:
+        logger.info(f"Retrieved {len(results)} chunks for query: {query!r}")
 
+    return results
 
 if __name__ == "__main__":
     # Standalone test — run from backend/:
@@ -80,7 +86,7 @@ if __name__ == "__main__":
 
     db = SessionLocal()
     test_query = "What is a large language model?"  # adjust to match your uploaded PDF's topic
-    results = retrieve_top_k(db, test_query, k=3)
+    results = retrieve_top_k(db, test_query, k=3,use_reranking=True)
 
     print(f"Query: {test_query}")
     print(f"Results: {len(results)}\n")
