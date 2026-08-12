@@ -94,9 +94,6 @@ data/
 
 ---
 
-## 🔄 RAG Pipeline
-
-
 
 ## 🚀 Running the Project
 
@@ -130,10 +127,13 @@ uvicorn main:app --reload
 
 ### Start Frontend
 
+In a separate terminal:
+
 ```bash
 cd frontend
 streamlit run app.py
 ```
+Both the backend (`http://127.0.0.1:8000`) and frontend (`http://localhost:8501`) must be running simultaneously.
 
 ---
 
@@ -141,15 +141,39 @@ streamlit run app.py
 
 | Endpoint | Description |
 |----------|-------------|
-| POST `/upload` | Upload a PDF |
-| POST `/notes` | Create a note |
-| POST `/chat` | Chat with knowledge base |
-| POST `/search` | Semantic search |
-| GET `/documents` | List documents |
-| GET `/documents/{id}` | Document details |
-| DELETE `/documents/{id}` | Delete document |
-| GET `/dashboard` | Dashboard statistics |
+| POST `/api/v1/documents/upload` | Upload a PDF |
+| POST `/api/v1/notes` | Create a note |
+| POST `/api/v1/chat/query` | Chat with knowledge base |
+| POST `/api/v1/search` | Semantic search |
+| GET `/api/v1/documents` | List documents |
+| GET `/api/v1/documents/{id}` | Document details |
+| DELETE `/api/v1/documents/{id}` | Delete document |
+| POST `/api/v1/summary/{id}` | Generate summary + tags |
+| GET `/api/v1/dashboard` | Dashboard statistics |
 | GET `/health` | Health check |
+
+Full interactive API docs available at `/docs` once the backend is running.
+
+---
+
+## 🧪 Testing & Performance
+
+- Targeted `pytest` suite (`backend/tests/test_core.py`) covering:
+  - Cross-store (SQLite ↔ ChromaDB) chunk ID consistency
+  - Semantic retrieval discrimination across unrelated documents
+  - A mocked end-to-end RAG pipeline (retrieval independent of LLM uptime)
+- Ingestion and retrieval benchmarking (`backend/tests/benchmark.py`):
+  - ~50 chunks/sec ingestion throughput
+  - Sub-15ms average retrieval latency
+  - 100% top-K retrieval accuracy on a representative query set
+- Cross-encoder reranking benchmark (`backend/tests/benchmark_reranking.py`):
+  - Measures precision/latency trade-off of an optional reranking stage against baseline vector retrieval
+
+Run tests:
+```bash
+cd backend
+pytest tests/test_core.py -v
+```
 
 ---
 
@@ -163,21 +187,34 @@ streamlit run app.py
 - ✅ ChromaDB integration
 - ✅ SQLite metadata
 - ✅ Semantic search
-- ✅ RAG chat
+- ✅ RAG chat with citations
 - ✅ AI summaries
 - ✅ Auto-tagging
 - ✅ Dashboard
-- 🚧 Streamlit frontend integration
+- ✅ Full Streamlit frontend integration
+- ✅ Cross-encoder reranking (benchmarked, opt-in)
 
 ---
 
+## 🎯 Key Design Decisions
+
+- **Local embeddings, not Gemini embeddings** — avoids API rate limits/cost on a high-frequency operation (embedding runs on every chunk of every upload).
+- **UUID-matched IDs across SQLite and ChromaDB** — every chunk's ID is generated once (via SQLAlchemy) and reused identically in Chroma, avoiding a separate ID-mapping table.
+- **Thin routers, fat services** — API routers only handle HTTP concerns; orchestration logic lives in `services/`, making each piece independently testable.
+- **Graceful LLM failure handling** — Gemini API overload (503) returns a clear fallback message instead of crashing the request.
+- **Reranking kept opt-in, not default** — benchmarking showed cross-encoder reranking adds significant latency (~400-500ms on CPU) with mixed precision gains on a small corpus; kept as an available capability rather than a default trade-off.
+
+---
+
+
 ## 🔮 Future Enhancements
 
-- Re-ranking for improved retrieval
+- Wire reranking into live chat/search endpoints (currently standalone, benchmarked)
 - Knowledge Graph visualization
 - Hybrid search (Keyword + Vector)
 - OCR support for scanned PDFs
 - Multi-user authentication
+- Provider-agnostic LLM layer (beyond Gemini)
 - Docker deployment
 - Cloud storage support
 
