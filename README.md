@@ -1,5 +1,6 @@
 # 🧠 Second Brain AI
 
+![Banner](assets/banner.png)
 
 An AI-powered Personal Knowledge Management (PKM) system that transforms your documents and notes into a searchable, conversational knowledge base using Retrieval-Augmented Generation (RAG).
 
